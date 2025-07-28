@@ -2,36 +2,35 @@ import matplotlib.pyplot as plt
 import pandas
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.neighbors import KNeighborsRegressor
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, confusion_matrix
-import seaborn as sns
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
+# --- 1. Wczytanie danych ---
 data = pandas.read_csv('15m_data.csv', sep='\t', parse_dates=['DateTime'], dayfirst=False)
-features = ["Open", "High", "Low", "Close", "Volume", "TickVolume"]
-values = data[features].values
-# print(data['High'])
 
-# --- 1. Normalize the data ---
+# tylko kolumna Close
+values = data[['Close']].values.astype(np.float32)
+
+# --- 2. Normalizacja ---
 scaler = MinMaxScaler()
-scaled = scaler.fit_transform(values)
+scaled = scaler.fit_transform(values).astype(np.float32)
 
-
-# --- 2. Function to create sliding windows ---
+# --- 3. Funkcja tworząca sekwencje ---
 def create_sequences(data, lookback=30, forecast_horizon=1):
-    X, y = [], []
-    for i in range(len(data) - lookback - forecast_horizon + 1):
-        X.append(data[i:i+lookback])
-        y.append(data[i+lookback:i+lookback+forecast_horizon])
-    return np.array(X), np.array(y)
+    n_samples = len(data) - lookback - forecast_horizon + 1
+    X = np.zeros((n_samples, lookback, data.shape[1]), dtype=np.float32)
+    y = np.zeros((n_samples, forecast_horizon, data.shape[1]), dtype=np.float32)
+    for i in range(n_samples):
+        X[i] = data[i:i+lookback]
+        y[i] = data[i+lookback:i+lookback+forecast_horizon]
+    return X, y
 
-
-# Use last 30 days to predict next 1 day
+# --- 4. Przygotowanie danych ---
 lookback = 30
 forecast_horizon = 1
 X, y = create_sequences(scaled, lookback, forecast_horizon)
 
-# --- 3. Train/validation/test split (no shuffle!) ---
+# --- 5. Podział na train/val/test ---
 train_size = int(len(X) * 0.7)
 val_size = int(len(X) * 0.15)
 
@@ -39,48 +38,39 @@ X_train, y_train = X[:train_size], y[:train_size]
 X_val, y_val = X[train_size:train_size+val_size], y[train_size:train_size+val_size]
 X_test, y_test = X[train_size+val_size:], y[train_size+val_size:]
 
-# 4. Flatten X and select 'Close' as target
-target_col = 3  # index of 'Close'
+# wybór kolumny Close (tu tylko jedna kolumna, index 0)
+target_col = 0
 y_train = y_train[:, -1, target_col]
 y_val = y_val[:, -1, target_col]
 y_test = y_test[:, -1, target_col]
 
-# Get shapes per split
+# --- 6. Reshape dla modelu ---
 n_train, n_steps, n_feats = X_train.shape
 n_val = X_val.shape[0]
 n_test = X_test.shape[0]
 
-# Reshape for 2D input
 X_train = X_train.reshape(n_train, n_steps * n_feats)
 X_val = X_val.reshape(n_val, n_steps * n_feats)
 X_test = X_test.reshape(n_test, n_steps * n_feats)
 
+# --- 7. Model Random Forest ---
+rf = RandomForestRegressor(n_estimators=50, max_depth=10, n_jobs=-1, random_state=42)
+rf.fit(X_train, y_train)
 
+# --- 8. Predykcje ---
+rf_y_pred = rf.predict(X_test)
 
-# train models
-# model_gbr = GradientBoostingRegressor(n_estimators=100, learning_rate=1.0,
-# max_depth=1, random_state=0).fit(X_train, y_train)
-# model_gbr.score(X_test, y_test)
+# --- 9. Metryki ---
+rf_mse = mean_squared_error(y_test, rf_y_pred)
+rf_mae = mean_absolute_error(y_test, rf_y_pred)
+rf_r2 = r2_score(y_test, rf_y_pred)
 
-neigh = KNeighborsRegressor(n_neighbors=5)
-neigh.fit(X_train, y_train)
+print(f"RF: MSE: {rf_mse:.6f}, MAE: {rf_mae:.6f}, R²: {rf_r2:.4f}")
 
-# 6. Predictions
-y_pred = neigh.predict(X_test)
-
-# 7. Metrics
-mse = mean_squared_error(y_test, y_pred)
-mae = mean_absolute_error(y_test, y_pred)
-r2 = r2_score(y_test, y_pred)
-print(f"MSE: {mse:.6f}, MAE: {mae:.6f}, R²: {r2:.4f}")
-
-# 8. Plot prediction vs actual
+# --- 10. Wykres ---
 plt.figure(figsize=(10, 5))
 plt.plot(y_test, label="Actual")
-plt.plot(y_pred, label="Predicted")
+plt.plot(rf_y_pred, label="Predicted Random Forest")
 plt.legend()
 plt.title("NASDAQ Close Price Prediction (Test Set)")
 plt.show()
-# plt.figure(1)
-# plt.plot(range(len(data)), data['High'])
-# plt.show()
